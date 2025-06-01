@@ -4272,6 +4272,12 @@ TickType_t uxReturn;
 
 #endif /* configUSE_TASK_NOTIFICATIONS */
 /*-----------------------------------------------------------*/
+#ifdef FREERTOS_PORT_REALTEK_AMB1
+void * vTaskGetCurrentTCB( void )
+{
+	return (void*)pxCurrentTCB;
+}
+#endif
 
 #if( configUSE_TASK_NOTIFICATIONS == 1 )
 
