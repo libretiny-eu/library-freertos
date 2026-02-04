@@ -88,6 +88,21 @@ extern "C" {
  * MACROS AND DEFINITIONS
  *----------------------------------------------------------*/
 
+#ifdef FREERTOS_PORT_BEKEN_BDK
+#if defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+#define configTIMER_STATE 1
+#else
+#define configTIMER_STATE 0
+#endif
+#if ( configTIMER_STATE == 1 )
+enum {
+    TIMER_STATE_INIT = 0,
+    TIMER_STATE_RUNNING,
+    TIMER_STATE_STOPPED,
+};
+#endif
+#endif
+
 /* IDs for commands that can be sent/received on the timer queue.  These are to
 be used solely through the macros that make up the public software timer API,
 as defined below.  The commands that are sent from interrupts must use the
@@ -102,11 +117,20 @@ or interrupt version of the queue send function should be used. */
 #define tmrCOMMAND_CHANGE_PERIOD				( ( BaseType_t ) 4 )
 #define tmrCOMMAND_DELETE						( ( BaseType_t ) 5 )
 
+#if !defined(FREERTOS_PORT_BEKEN_BDK) || ( configTIMER_STATE == 0 )
 #define tmrFIRST_FROM_ISR_COMMAND				( ( BaseType_t ) 6 )
 #define tmrCOMMAND_START_FROM_ISR				( ( BaseType_t ) 6 )
 #define tmrCOMMAND_RESET_FROM_ISR				( ( BaseType_t ) 7 )
 #define tmrCOMMAND_STOP_FROM_ISR				( ( BaseType_t ) 8 )
 #define tmrCOMMAND_CHANGE_PERIOD_FROM_ISR		( ( BaseType_t ) 9 )
+#else
+#define tmrCOMMAND_SKIP						( ( BaseType_t ) 6 )
+#define tmrFIRST_FROM_ISR_COMMAND				( ( BaseType_t ) 10 )
+#define tmrCOMMAND_START_FROM_ISR				( ( BaseType_t ) tmrFIRST_FROM_ISR_COMMAND )
+#define tmrCOMMAND_RESET_FROM_ISR				( ( BaseType_t ) tmrFIRST_FROM_ISR_COMMAND + 1 )
+#define tmrCOMMAND_STOP_FROM_ISR				( ( BaseType_t ) tmrFIRST_FROM_ISR_COMMAND + 2 )
+#define tmrCOMMAND_CHANGE_PERIOD_FROM_ISR			( ( BaseType_t ) tmrFIRST_FROM_ISR_COMMAND + 3 )
+#endif
 
 
 /**
@@ -1304,6 +1328,11 @@ TickType_t xTimerGetExpiryTime( TimerHandle_t xTimer ) PRIVILEGED_FUNCTION;
  */
 BaseType_t xTimerCreateTimerTask( void ) PRIVILEGED_FUNCTION;
 BaseType_t xTimerGenericCommand( TimerHandle_t xTimer, const BaseType_t xCommandID, const TickType_t xOptionalValue, BaseType_t * const pxHigherPriorityTaskWoken, const TickType_t xTicksToWait ) PRIVILEGED_FUNCTION;
+
+#ifdef FREERTOS_PORT_BEKEN_BDK
+BaseType_t xTimerInTimerTask(void);
+uint8_t pcTimerGetState(TimerHandle_t xTimer);
+#endif
 
 #ifdef __cplusplus
 }

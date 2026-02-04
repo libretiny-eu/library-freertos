@@ -79,6 +79,10 @@ task.h is included from an application file. */
 #include "task.h"
 #include "queue.h"
 
+#ifdef FREERTOS_PORT_BEKEN_BDK
+#include "include.h"
+#endif
+
 #if ( configUSE_CO_ROUTINES == 1 )
 	#include "croutine.h"
 #endif
@@ -401,7 +405,17 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 			/* Allocate enough space to hold the maximum number of items that
 			can be in the queue at any time. */
 			xQueueSizeInBytes = ( size_t ) ( uxQueueLength * uxItemSize ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
+
+			#if defined(FREERTOS_PORT_BEKEN_BDK) && defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+			/* Check for multiplication overflow. */
+			configASSERT( uxQueueLength == ( xQueueSizeInBytes / uxItemSize ) );
+			#endif
 		}
+
+		#if defined(FREERTOS_PORT_BEKEN_BDK) && defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+		/* Check for addition overflow. */
+		configASSERT( ( sizeof( Queue_t ) + xQueueSizeInBytes ) >  xQueueSizeInBytes );
+		#endif
 
 		pxNewQueue = ( Queue_t * ) pvPortMalloc( sizeof( Queue_t ) + xQueueSizeInBytes );
 
@@ -1244,6 +1258,40 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	return xReturn;
 }
 /*-----------------------------------------------------------*/
+
+#if defined(FREERTOS_PORT_BEKEN_BDK) && defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+void* xQueuePickNext( QueueHandle_t xQueue, void *const pvCur )
+{
+	Queue_t * const pxQueue = ( Queue_t * ) xQueue;
+	void *pvNext = NULL;
+
+	taskENTER_CRITICAL();
+	const UBaseType_t uxMessagesWaiting = pxQueue->uxMessagesWaiting;
+
+	if( uxMessagesWaiting > ( UBaseType_t ) 0 ) {
+		const UBaseType_t uxItemSize = pxQueue->uxItemSize;
+
+		if( uxItemSize != ( UBaseType_t ) 0 ) {
+			int8_t *pcRead = (int8_t*)pvCur;
+			int8_t *pcWrite = pxQueue->pcWriteTo;
+
+			if (!pcRead)
+				pcRead = pxQueue->u.pcReadFrom;
+			pcRead += uxItemSize;
+
+			if( pcRead >= pxQueue->pcTail )
+				pcRead = pxQueue->pcHead;
+
+			if (pcRead != pcWrite) {
+				pvNext = (void*)pcRead;
+			}
+		}
+	}
+	taskEXIT_CRITICAL();
+
+	return pvNext;
+}
+#endif
 
 BaseType_t xQueueGenericReceive( QueueHandle_t xQueue, void * const pvBuffer, TickType_t xTicksToWait, const BaseType_t xJustPeeking )
 {

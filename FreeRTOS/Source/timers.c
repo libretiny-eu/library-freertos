@@ -116,6 +116,9 @@ typedef struct tmrTimerControl
 	#if( ( configSUPPORT_STATIC_ALLOCATION == 1 ) && ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) )
 		uint8_t 			ucStaticallyAllocated; /*<< Set to pdTRUE if the timer was created statically so no attempt is made to free the memory again if the timer is later deleted. */
 	#endif
+	#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+		uint8_t state;
+	#endif
 } xTIMER;
 
 /* The old xTIMER name is maintained above then typedefed to the new Timer_t
@@ -408,6 +411,9 @@ static void prvInitialiseNewTimer(	const char * const pcTimerName,
 		pxNewTimer->uxAutoReload = uxAutoReload;
 		pxNewTimer->pvTimerID = pvTimerID;
 		pxNewTimer->pxCallbackFunction = pxCallbackFunction;
+#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+		pxNewTimer->state = TIMER_STATE_INIT;
+#endif
 		vListInitialiseItem( &( pxNewTimer->xTimerListItem ) );
 		traceTIMER_CREATE( pxNewTimer );
 	}
@@ -507,6 +513,52 @@ Timer_t *pxTimer = ( Timer_t * ) xTimer;
 	return pxTimer->pcTimerName;
 }
 /*-----------------------------------------------------------*/
+#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+
+BaseType_t xTimerInTimerTask(void)
+{
+	return (xTimerTaskHandle == xTaskGetCurrentTaskHandle());
+}
+
+static BaseType_t prvTimerIsRunning(Timer_t *pxTimer)
+{
+	return !!( pxTimer->state == TIMER_STATE_RUNNING );
+}
+
+static BaseType_t prvTimerIsStopped(Timer_t *pxTimer)
+{
+	return !!( pxTimer->state == TIMER_STATE_STOPPED );
+}
+
+static void prvTimerSetState( Timer_t *pxTimer, uint8_t state )
+{
+	pxTimer->state = state;
+}
+
+void prvClearQueuedMsg( Timer_t *pxTimer )
+{
+	DaemonTaskMessage_t *pxMsg;
+	Timer_t *pxCurTimer;
+
+	pxMsg = xQueuePickNext(xTimerQueue, NULL);
+	while (pxMsg) {
+		if (pxMsg->xMessageID >= 0) {
+			pxCurTimer = pxMsg->u.xTimerParameters.pxTimer;
+			if (pxCurTimer == pxTimer) {
+				pxMsg->xMessageID = tmrCOMMAND_SKIP;
+			}
+		}
+		pxMsg = xQueuePickNext(xTimerQueue, pxMsg);
+	}
+}
+
+uint8_t pcTimerGetState(TimerHandle_t xTimer)
+{
+	Timer_t *pxTimer = ( Timer_t * ) xTimer;
+
+	return pxTimer->state;
+}
+#endif
 
 static void prvProcessExpiredTimer( const TickType_t xNextExpireTime, const TickType_t xTimeNow )
 {
@@ -543,8 +595,15 @@ Timer_t * const pxTimer = ( Timer_t * ) listGET_OWNER_OF_HEAD_ENTRY( pxCurrentTi
 		mtCOVERAGE_TEST_MARKER();
 	}
 
+#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+	if (prvTimerIsRunning(pxTimer)) {
+		pxTimer->pxCallbackFunction( ( TimerHandle_t ) pxTimer );
+	} else {
+	}
+#else
 	/* Call the timer callback. */
 	pxTimer->pxCallbackFunction( ( TimerHandle_t ) pxTimer );
+#endif
 }
 /*-----------------------------------------------------------*/
 
@@ -667,6 +726,35 @@ TickType_t xNextExpireTime;
 	}
 
 	return xNextExpireTime;
+}
+
+uint32_t xTimerGetCurrentTimerCount(void)
+{
+    return ( ( BaseType_t ) ( pxCurrentTimerList )->uxNumberOfItems );
+}
+
+uint32_t xTimerGetNextExpireTime(void)
+{
+    TickType_t xTimeNow;
+    BaseType_t xTimerListsWereSwitched;
+    TickType_t xNextExpireTime;
+    BaseType_t xListWasEmpty;
+    xTimeNow = prvSampleTimeNow( &xTimerListsWereSwitched );
+    if( xTimerListsWereSwitched == pdFALSE )
+        {
+        xNextExpireTime = prvGetNextExpireTime( &xListWasEmpty);
+        return xNextExpireTime;
+        if(xNextExpireTime )
+            {
+            if( xNextExpireTime > xTimeNow)
+                return xNextExpireTime - xTimeNow;
+            else
+                return 0xffffffffUL;
+            }
+        else
+            return xNextExpireTime;
+        }
+    return 0xffffffffUL;         
 }
 /*-----------------------------------------------------------*/
 
@@ -800,6 +888,13 @@ TickType_t xTimeNow;
 			    case tmrCOMMAND_RESET :
 			    case tmrCOMMAND_RESET_FROM_ISR :
 				case tmrCOMMAND_START_DONT_TRACE :
+					#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+						if ( ( xMessage.xMessageID == tmrCOMMAND_START_DONT_TRACE ) && ( prvTimerIsStopped(pxTimer) ) ) {
+							break;
+						}
+						prvTimerSetState(pxTimer, TIMER_STATE_RUNNING);
+					#endif
+
 					/* Start or restart a timer. */
 					if( prvInsertTimerInActiveList( pxTimer,  xMessage.u.xTimerParameters.xMessageValue + pxTimer->xTimerPeriodInTicks, xTimeNow, xMessage.u.xTimerParameters.xMessageValue ) != pdFALSE )
 					{
@@ -827,6 +922,10 @@ TickType_t xTimeNow;
 
 				case tmrCOMMAND_STOP :
 				case tmrCOMMAND_STOP_FROM_ISR :
+					#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+						prvTimerSetState(pxTimer, TIMER_STATE_STOPPED);
+					#endif
+
 					/* The timer has already been removed from the active list.
 					There is nothing to do here. */
 					break;
@@ -835,6 +934,15 @@ TickType_t xTimeNow;
 				case tmrCOMMAND_CHANGE_PERIOD_FROM_ISR :
 					pxTimer->xTimerPeriodInTicks = xMessage.u.xTimerParameters.xMessageValue;
 					configASSERT( ( pxTimer->xTimerPeriodInTicks > 0 ) );
+
+					#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+					/* If the timer is already stopped, CHANGE_PERIOD command only changes the period
+					but not place it into the active list, namely not start the timer, the application
+					needs to start timer explicitly */
+					if (prvTimerIsStopped(pxTimer)) {
+						break;
+					}
+					#endif
 
 					/* The new period does not really have a reference, and can
 					be longer or shorter than the old one.  The command time is
@@ -846,6 +954,16 @@ TickType_t xTimeNow;
 					break;
 
 				case tmrCOMMAND_DELETE :
+					#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+					{
+						prvClearQueuedMsg(pxTimer);
+						//Trigger beneken timer to set the state to BEKEN_TIMER_DELETED
+						void *time_id = pvTimerGetTimerID(pxTimer);
+						if(time_id != NULL)
+							pxTimer->pxCallbackFunction( ( TimerHandle_t ) pxTimer );
+					}
+					#endif
+
 					/* The timer has already been removed from the active list,
 					just free up the memory if the memory was dynamically
 					allocated. */
@@ -871,6 +989,11 @@ TickType_t xTimeNow;
 					}
 					#endif /* configSUPPORT_DYNAMIC_ALLOCATION */
 					break;
+
+				#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+				case tmrCOMMAND_SKIP:
+					break;
+				#endif
 
 				default	:
 					/* Don't expect to get here. */
@@ -1029,6 +1152,12 @@ static void prvCheckForValidListAndQueue( void )
 }
 /*-----------------------------------------------------------*/
 
+#if defined(FREERTOS_PORT_BEKEN_BDK) && ( configTIMER_STATE == 1 )
+BaseType_t xTimerIsTimerActive( TimerHandle_t xTimer )
+{
+	return prvTimerIsRunning(( Timer_t * )xTimer);
+}
+#else
 BaseType_t xTimerIsTimerActive( TimerHandle_t xTimer )
 {
 BaseType_t xTimerIsInActiveList;
@@ -1048,6 +1177,8 @@ Timer_t *pxTimer = ( Timer_t * ) xTimer;
 
 	return xTimerIsInActiveList;
 } /*lint !e818 Can't be pointer to const due to the typedef. */
+#endif
+
 /*-----------------------------------------------------------*/
 
 void *pvTimerGetTimerID( const TimerHandle_t xTimer )

@@ -2765,7 +2765,11 @@ void vTaskSwitchContext( void )
 	#ifdef FREERTOS_PORT_BEKEN_BDK
 	GLOBAL_INT_DECLARATION();
 	GLOBAL_INT_DISABLE();
+	#if defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+	if(preempt_delayed_schedule_check())
+	#else
 	if(preempt_delayed_schedule_handler())
+	#endif
 	{
 		GLOBAL_INT_RESTORE();
 		return;

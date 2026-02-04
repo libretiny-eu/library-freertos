@@ -1789,6 +1789,9 @@ void vQueueSetQueueNumber( QueueHandle_t xQueue, UBaseType_t uxQueueNumber ) PRI
 UBaseType_t uxQueueGetQueueNumber( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 uint8_t ucQueueGetQueueType( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 
+#if defined(FREERTOS_PORT_BEKEN_BDK) && defined(CFG_BDK_VERSION) && CFG_BDK_VERSION >= 30045
+void* xQueuePickNext( QueueHandle_t xQueue, void *const pvCur );
+#endif
 
 #ifdef __cplusplus
 }
